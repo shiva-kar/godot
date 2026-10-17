@@ -46,8 +46,10 @@ const GodotIME = {
 
 		ime_active: function (active) {
 			function clearFocusTimerInterval() {
-				clearInterval(GodotIME.focusTimerIntervalId);
-				GodotIME.focusTimerIntervalId = -1;
+				if (GodotIME.focusTimerIntervalId > -1) {
+					clearInterval(GodotIME.focusTimerIntervalId);
+					GodotIME.focusTimerIntervalId = -1;
+				}
 			}
 
 			function focusTimer() {
@@ -55,12 +57,12 @@ const GodotIME = {
 					clearFocusTimerInterval();
 					return;
 				}
-				GodotIME.ime.focus();
+				if (document.activeElement !== GodotIME.ime) {
+					GodotIME.ime.focus();
+				}
 			}
 
-			if (GodotIME.focusTimerIntervalId > -1) {
-				clearFocusTimerInterval();
-			}
+			clearFocusTimerInterval();
 
 			if (GodotIME.ime == null) {
 				return;
@@ -69,9 +71,11 @@ const GodotIME = {
 			GodotIME.active = active;
 			if (active) {
 				GodotIME.ime.style.display = 'block';
+				GodotIME.ime.focus();
 				GodotIME.focusTimerIntervalId = setInterval(focusTimer, 100);
 			} else {
 				GodotIME.ime.style.display = 'none';
+				GodotIME.ime.textContent = '';
 				GodotConfig.canvas.focus();
 			}
 		},
@@ -92,36 +96,108 @@ const GodotIME = {
 		},
 
 		init: function (ime_cb, key_cb, code, key) {
+			let lastKey = '';
+			let isComposing = false;
+			let justComposed = false;
+
 			function key_event_cb(pressed, evt) {
-				const modifiers = GodotIME.getModifiers(evt);
-				GodotRuntime.stringToHeap(evt.code, code, 32);
-				GodotRuntime.stringToHeap(evt.key, key, 32);
-				key_cb(pressed, evt.repeat, modifiers);
-				evt.preventDefault();
+				const isComposingOrIme = evt.isComposing || evt.keyCode === 229 || evt.key === 'Unidentified' || evt.key === 'Process' || evt.key === 'Dead';
+				justComposed = false;
+				if (pressed) {
+					lastKey = evt.key;
+				} else {
+					lastKey = '';
+				}
+
+				if (!isComposingOrIme) {
+					const modifiers = GodotIME.getModifiers(evt);
+					GodotRuntime.stringToHeap(evt.code, code, 32);
+					GodotRuntime.stringToHeap(evt.key, key, 32);
+					key_cb(pressed, evt.repeat, modifiers);
+					evt.preventDefault();
+				}
 			}
+
 			function ime_event_cb(event) {
 				if (GodotIME.ime == null) {
 					return;
 				}
 				switch (event.type) {
 				case 'compositionstart':
+					isComposing = true;
+					justComposed = false;
 					ime_cb(0, null);
-					GodotIME.ime.innerHTML = '';
+					GodotIME.ime.textContent = '';
 					break;
 				case 'compositionupdate': {
+					isComposing = true;
 					const ptr = GodotRuntime.allocString(event.data);
 					ime_cb(1, ptr);
 					GodotRuntime.free(ptr);
 				} break;
-				case 'compositionend': {
-					const ptr = GodotRuntime.allocString(event.data);
-					ime_cb(2, ptr);
-					GodotRuntime.free(ptr);
-					GodotIME.ime.innerHTML = '';
-				} break;
+				case 'compositionend':
+					isComposing = false;
+					justComposed = true;
+					if (event.data) {
+						const ptr = GodotRuntime.allocString(event.data);
+						ime_cb(2, ptr);
+						GodotRuntime.free(ptr);
+					}
+					GodotIME.ime.textContent = '';
+					setTimeout(function () {
+						justComposed = false;
+					}, 0);
+					break;
 				default:
 					// Do nothing.
 				}
+			}
+
+			function beforeinput_cb(evt) {
+				if (GodotIME.ime == null) {
+					return;
+				}
+				justComposed = false;
+				if (evt.inputType === 'deleteContentBackward') {
+					if (lastKey !== 'Backspace') {
+						GodotRuntime.stringToHeap('Backspace', code, 32);
+						GodotRuntime.stringToHeap('Backspace', key, 32);
+						key_cb(1, 0, 0);
+						key_cb(0, 0, 0);
+					}
+				} else if (evt.inputType === 'deleteContentForward') {
+					if (lastKey !== 'Delete') {
+						GodotRuntime.stringToHeap('Delete', code, 32);
+						GodotRuntime.stringToHeap('Delete', key, 32);
+						key_cb(1, 0, 0);
+						key_cb(0, 0, 0);
+					}
+				}
+			}
+
+			function input_event_cb(evt) {
+				if (GodotIME.ime == null) {
+					return;
+				}
+				if (isComposing || evt.isComposing || evt.inputType === 'insertCompositionText' || evt.inputType === 'deleteCompositionText') {
+					return;
+				}
+				if (justComposed) {
+					justComposed = false;
+					GodotIME.ime.textContent = '';
+					return;
+				}
+				if (evt.inputType === 'insertFromPaste' || evt.inputType === 'insertFromDrop' || (evt.inputType && evt.inputType.startsWith('delete'))) {
+					GodotIME.ime.textContent = '';
+					return;
+				}
+				const text = evt.data;
+				if (text && text.length > 0) {
+					const ptr = GodotRuntime.allocString(text);
+					ime_cb(2, ptr);
+					GodotRuntime.free(ptr);
+				}
+				GodotIME.ime.textContent = '';
 			}
 
 			const ime = document.createElement('div');
@@ -130,7 +206,7 @@ const GodotIME = {
 			ime.style.opacity = 0.0;
 			ime.style.position = 'fixed';
 			ime.style.textAlign = 'left';
-			ime.style.fontSize = '1px';
+			ime.style.fontSize = '16px';
 			ime.style.left = '0px';
 			ime.style.top = '0px';
 			ime.style.width = '100%';
@@ -138,14 +214,24 @@ const GodotIME = {
 			ime.style.pointerEvents = 'none';
 			ime.style.display = 'none';
 			ime.contentEditable = 'true';
+			ime.inputMode = 'text';
+			ime.setAttribute('autocorrect', 'off');
+			ime.setAttribute('autocapitalize', 'off');
+			ime.setAttribute('spellcheck', 'false');
 
 			GodotEventListeners.add(ime, 'compositionstart', ime_event_cb, false);
 			GodotEventListeners.add(ime, 'compositionupdate', ime_event_cb, false);
 			GodotEventListeners.add(ime, 'compositionend', ime_event_cb, false);
+			GodotEventListeners.add(ime, 'beforeinput', beforeinput_cb, false);
+			GodotEventListeners.add(ime, 'input', input_event_cb, false);
 			GodotEventListeners.add(ime, 'keydown', key_event_cb.bind(null, 1), false);
 			GodotEventListeners.add(ime, 'keyup', key_event_cb.bind(null, 0), false);
 
 			ime.onblur = function () {
+				if (isComposing) {
+					isComposing = false;
+					ime_cb(2, null);
+				}
 				this.style.display = 'none';
 				GodotConfig.canvas.focus();
 				GodotIME.active = false;

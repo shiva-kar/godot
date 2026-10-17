@@ -206,18 +206,28 @@ Key dom_code2godot_scancode(EM_UTF8 const p_code[32], EM_UTF8 const p_key[32], b
 	DOM2GODOT("AudioVolumeUp", VOLUMEUP);
 	//DOM2GODOT("WakeUp", UNKNOWN);
 
+	if (p_physical) {
+		return Key::NONE;
+	}
+
 	// Printable ASCII.
-	uint8_t b0 = (uint8_t)p_key[0];
-	uint8_t b1 = (uint8_t)p_key[1];
-	if (b0 >= 0x20 && b0 < 0x7F) { // ASCII.
-		if (b0 > 0x60 && b0 < 0x7B) { // Lowercase ASCII.
-			b0 -= 32;
+	size_t key_len = strlen(p_key);
+	if (key_len == 1) {
+		uint8_t b0 = (uint8_t)p_key[0];
+		if (b0 >= 0x20 && b0 < 0x7F) { // ASCII.
+			if (b0 > 0x60 && b0 < 0x7B) { // Lowercase ASCII.
+				b0 -= 32;
+			}
+			return (Key)b0;
 		}
-		return (Key)b0;
-	} else if (b0 == 0xC2 && b1 == 0xA5) {
-		return Key::YEN;
-	} else if (b0 == 0xC2 && b1 == 0xA7) {
-		return Key::SECTION;
+	} else if (key_len == 2) {
+		uint8_t b0 = (uint8_t)p_key[0];
+		uint8_t b1 = (uint8_t)p_key[1];
+		if (b0 == 0xC2 && b1 == 0xA5) {
+			return Key::YEN;
+		} else if (b0 == 0xC2 && b1 == 0xA7) {
+			return Key::SECTION;
+		}
 	}
 
 	return Key::NONE;

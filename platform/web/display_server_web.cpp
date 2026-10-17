@@ -221,6 +221,10 @@ void DisplayServerWeb::_key_callback(const String &p_key_event_code, const Strin
 	ke.location = location;
 	ke.mod = p_modifiers;
 
+	if (ke.keycode == Key::NONE && ke.physical_keycode == Key::NONE && ke.unicode == 0) {
+		return;
+	}
+
 	if (ds->key_event_pos >= ds->key_event_buffer.size()) {
 		ds->key_event_buffer.resize(1 + ds->key_event_pos);
 	}
@@ -902,18 +906,20 @@ void DisplayServerWeb::_ime_callback(int p_type, const String &p_text) {
 	switch (p_type) {
 		case 0: {
 			// IME start.
-			ds->ime_text = String();
-			ds->ime_selection = Vector2i();
-			for (int i = ds->key_event_pos - 1; i >= 0; i--) {
-				// Delete last raw keydown event from query.
-				if (ds->key_event_buffer[i].pressed && ds->key_event_buffer[i].raw) {
-					ds->key_event_buffer.remove_at(i);
-					ds->key_event_pos--;
-					break;
+			if (ds->ime_active) {
+				ds->ime_text = String();
+				ds->ime_selection = Vector2i();
+				for (int i = ds->key_event_pos - 1; i >= 0; i--) {
+					// Delete last raw keydown event from query.
+					if (ds->key_event_buffer[i].pressed && ds->key_event_buffer[i].raw) {
+						ds->key_event_buffer.remove_at(i);
+						ds->key_event_pos--;
+						break;
+					}
 				}
+				OS::get_singleton()->get_main_loop()->notification(MainLoop::NOTIFICATION_OS_IME_UPDATE);
+				ds->ime_started = true;
 			}
-			OS::get_singleton()->get_main_loop()->notification(MainLoop::NOTIFICATION_OS_IME_UPDATE);
-			ds->ime_started = true;
 		} break;
 		case 1: {
 			// IME update.
@@ -925,9 +931,7 @@ void DisplayServerWeb::_ime_callback(int p_type, const String &p_text) {
 		} break;
 		case 2: {
 			// IME commit.
-			if (ds->ime_active && ds->ime_started) {
-				ds->ime_started = false;
-
+			if (ds->ime_active && !p_text.is_empty()) {
 				ds->ime_text = String();
 				ds->ime_selection = Vector2i();
 				OS::get_singleton()->get_main_loop()->notification(MainLoop::NOTIFICATION_OS_IME_UPDATE);
@@ -950,7 +954,12 @@ void DisplayServerWeb::_ime_callback(int p_type, const String &p_text) {
 					}
 					ds->key_event_buffer.write[ds->key_event_pos++] = ke;
 				}
+			} else if (ds->ime_started) {
+				ds->ime_text = String();
+				ds->ime_selection = Vector2i();
+				OS::get_singleton()->get_main_loop()->notification(MainLoop::NOTIFICATION_OS_IME_UPDATE);
 			}
+			ds->ime_started = false;
 		} break;
 		default:
 			break;
@@ -962,6 +971,11 @@ void DisplayServerWeb::_ime_callback(int p_type, const String &p_text) {
 
 void DisplayServerWeb::window_set_ime_active(const bool p_active, DisplayServerEnums::WindowID p_window) {
 	ime_active = p_active;
+	if (!p_active) {
+		ime_started = false;
+		ime_text = String();
+		ime_selection = Vector2i();
+	}
 	godot_js_set_ime_active(p_active);
 }
 
